@@ -1,0 +1,14 @@
+name: azure
+channels:
+  - defaults
+dependencies:
+  - pip
+  - python=3.8
+  - ipykernel
+  - autopep8
+  - pip:
+    - azure-batch==11.0.0
+    - azure-storage-blob==2.1.0
+    - azure-mgmt-resource>=18.0.0
+    - azure-identity>=1.5.0
+# pip install --no-deps -e . after cloning to install this package
