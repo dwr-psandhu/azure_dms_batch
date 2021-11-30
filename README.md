@@ -1,23 +1,23 @@
-============================================================
-Azure Batch runs for Models (input(s) --> EXE --> output(s))
-=============================================================
+# Azure Batch runs for Models 
+
+Models are proceses that take input and process via files and environment variables and run an exectuable producing output
+
+(input(s) --> EXE --> output(s))
 
 Azure Batch runs for a model, i.e., a executable that runs independently based on a set of input files and environment
 variables and produces a set of output files.
 
 This module is currently tested with "Windows" based exes but shoud be easily adapatable to "Linux"
 
-Setup 
----------
+## Setup 
+
 Setup can be done via az commands. Here we setup a batch account with associated storage
 
-Login with your Azure credentials
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+### Login with your Azure credentials
 
 ``az login ``
 
-Create a resource group in the desired location
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+### Create a resource group in the desired location
 
 See the Azure docs for details. To use the commands below, enter your values (replacing the angle brackets and values)
 
@@ -27,35 +27,31 @@ See the Azure docs for details. To use the commands below, enter your values (re
 
 ``az batch account create --name <batch_account_name> --storage-account <storage_account_name> --resource-group <resource_group_name> --location <location_name>``
 
-Applications
-~~~~~~~~~~~~~
+### Applications
 
 Applications are binary executable packages. These are uploaded as application packages with a version number. A pool can be specified
 so that these application packages are pre-downloaded to the nodes of the pool before a job/tasks are run on it.
 
-VM sizes available
-~~~~~~~~~~~~~~~~~~~~~
+### VM sizes available
 
 This is needed later when deciding what machine sizes to use
 ``az batch location list-skus --location <location_name> --output table``
 
-OS Images available
-~~~~~~~~~~~~~~~~~~~~
+### OS Images available
+
 set AZ_BATCH_ACCOUNT=<batch_account_name>
 set AZ_BATCH_ACCESS_KEY=<batch_account_key>
 set AZ_BATCH_ENDPOINT=<batch_account_url>
 az batch pool supported-images list --output table
 
 
-Tools
-------
+## Tools
 
 `Batch Explorer<https://azure.github.io/BatchExplorer/>`_ is a desktop tool for managing batch jobs, pools and application packages
 
 `Storage Explorer<https://azure.microsoft.com/en-us/features/storage-explorer/>`_ is a desktop tool for working with storage containers
 
-Classes
---------
+## Classes
 
 There are two classes in batch.commands
 
@@ -65,8 +61,7 @@ There are two classes in batch.commands
 Management of batch resources such as creation of batch account, storage account, etc is a low repeat activity 
 and can be managed via the az command line options
 
-Model
------
+## Model
 
 Model is considered to be something that :-
  - needs application packages, versions and the location of the binary directory (i.e. ApplicationPackage[])
@@ -74,8 +69,7 @@ Model is considered to be something that :-
  - has output file(s), which are uploaded to the associated storage via directives to the batch service
 
 
-Model run
-~~~~~~~~~
+## Model run
 
  Model run is a particular execution that is submitted to the batch service as a *task* 
  Each run :-  
@@ -84,8 +78,7 @@ Model run
   - could have a set of unique input files
   - could have environment settings unique to each run
 
-Parameterized runs
-~~~~~~~~~~~~~~~~~~~
+## Parameterized runs
 
  Many times the model runs are closely related to each other and only a few parameters are varied. These are
  submitted as a *task* to the batch service and perhaps reuse the same *pool* 
@@ -97,8 +90,7 @@ Parameterized runs
 
  In each case, the model run is expressed as a *task*
 
-Beopest runs
-~~~~~~~~~~~~
+## Beopest runs
 
  PEST (Parameterized ESTimation) is a software package for non-linear optimization. Beopest is a master/slave model 
  to implement a parallel version of estimation runs. Each run is a separate process that needs to run on its own set of
