@@ -4,6 +4,8 @@ Models are processes that take input and process via files and environment varia
 
 (input(s) --> EXE --> output(s))
 
+![Azure Batch Job Architecture](docs/tech_overview_03.png)
+
 Azure Batch runs for a model, i.e., a executable that runs independently based on a set of input files and environment
 variables and produces a set of output files.
 
@@ -15,17 +17,17 @@ Setup can be done via az commands. Here we setup a batch account with associated
 
 ### Login with your Azure credentials
 
-``az login ``
+```az login ```
 
 ### Create a resource group in the desired location
 
 See the Azure docs for details. To use the commands below, enter your values (replacing the angle brackets and values)
 
-``az group create --name <resource_group_name> --location <location_name>``
+```az group create --name <resource_group_name> --location <location_name>```
 
-``az storage account create --resource-group <resource_group_name> --name <storage_account_name> --location <location_name> --sku Standard_LRS``
+```az storage account create --resource-group <resource_group_name> --name <storage_account_name> --location <location_name> --sku Standard_LRS```
 
-``az batch account create --name <batch_account_name> --storage-account <storage_account_name> --resource-group <resource_group_name> --location <location_name>``
+```az batch account create --name <batch_account_name> --storage-account <storage_account_name> --resource-group <resource_group_name> --location <location_name>```
 
 You can also create the batch account and associated account as explained here https://docs.microsoft.com/en-us/azure/batch/batch-account-create-portal
 
@@ -45,35 +47,37 @@ for the Batch and Storage client objects. You can find these as explained here h
 
 Create a file with the following structure and replace the <> brackets and the text within them with the appropriate values 
 
-``
+```
 [DEFAULT]
 _BATCH_ACCOUNT_NAME = <batch_account_name>
 _BATCH_ACCOUNT_KEY = <batch_account_key>
 _BATCH_ACCOUNT_URL = https://<batch_account_name>.<location>.batch.azure.com
 _STORAGE_ACCOUNT_NAME = <storage_account_name>
 _STORAGE_ACCOUNT_KEY = <storage_account_key>
-``
+```
 
 ### VM sizes available
 
 This is needed later when deciding what machine sizes to use
-``az batch location list-skus --location <location_name> --output table``
+
+```az batch location list-skus --location <location_name> --output table```
 
 ### OS Images available
 
+```
 set AZ_BATCH_ACCOUNT=<batch_account_name>
 set AZ_BATCH_ACCESS_KEY=<batch_account_key>
 set AZ_BATCH_ENDPOINT=<batch_account_url>
 az batch pool supported-images list --output table
-
+```
 
 ## Tools
 Azure allows you to do most things via the command line interface (cli) or the web console. However I have found the following
 desktop apps useful for working with these services.
 
-`Batch Explorer<https://azure.github.io/BatchExplorer/>`_ is a desktop tool for managing batch jobs, pools and application packages
+[Batch Explorer](https://azure.github.io/BatchExplorer/) is a desktop tool for managing batch jobs, pools and application packages
 
-`Storage Explorer<https://azure.microsoft.com/en-us/features/storage-explorer/>`_ is a desktop tool for working with storage containers
+[Storage Explorer](https://azure.microsoft.com/en-us/features/storage-explorer/) is a desktop tool for working with storage containers
 
 ## Classes
 
@@ -108,8 +112,12 @@ Model is considered to be something that :-
   - could have a set of unique input files
   - could have environment settings unique to each run
 
-See the (notebooks/sample_submit_dsm2_hydro_version.ipynb) for a simple example
+See the [sample notebooks](notebooks/) for examples
 The samples explain step by step and can be used as a template for writing your own batch run
+
+The [simplest example](notebooks\sample_submit_dsm2_hydro_version.ipynb) is a run of dsm2 hydro outputting its version
+
+A [slightly more involved example](notebooks\sample_submit_dsm2_historical.ipynb) is a run of dsm2 hydro that uploads the input files as a zip and then uploads the output directory next to the uploaded input files at the end of the run
 
 ## Parameterized runs
 
@@ -123,6 +131,8 @@ The samples explain step by step and can be used as a template for writing your 
 
  In each case, the model run is expressed as a *task*
 
+ An [example of this](notebooks\sample_submit_ptm_batch.ipynb) demos it for PTM batch runs that vary based on environment variables. It also shows an example where a large file needs to be uploaded and shared with all the running tasks
+
 ## Beopest runs
 
  PEST (Parameterized ESTimation) is a software package for non-linear optimization. Beopest is a master/slave model 
@@ -135,3 +145,4 @@ The samples explain step by step and can be used as a template for writing your 
  multiple slaves as batch runs.  beopest master should then be able to register these slave tasks as they come in and 
  submit runs to them through its own mechanism (MPI). 
  
+ This [notebook](notebooks\sample_submit_beopest.ipynb) shows an implementation of the scheme above.
