@@ -1,6 +1,6 @@
 # Azure Batch runs for Models 
 
-Models are proceses that take input and process via files and environment variables and run an exectuable producing output
+Models are processes that take input and process via files and environment variables and run an exectuable producing output
 
 (input(s) --> EXE --> output(s))
 
@@ -27,10 +27,32 @@ See the Azure docs for details. To use the commands below, enter your values (re
 
 ``az batch account create --name <batch_account_name> --storage-account <storage_account_name> --resource-group <resource_group_name> --location <location_name>``
 
+You can also create the batch account and associated account as explained here https://docs.microsoft.com/en-us/azure/batch/batch-account-create-portal
+
 ### Applications
 
 Applications are binary executable packages. These are uploaded as application packages with a version number. A pool can be specified
 so that these application packages are pre-downloaded to the nodes of the pool before a job/tasks are run on it.
+See details here 
+* https://docs.microsoft.com/en-us/azure/batch/nodes-and-pools#application-packages
+* https://docs.microsoft.com/en-us/azure/batch/batch-application-packages
+
+## Config file
+
+Update the Batch and Storage account credential strings below with the values
+unique to your accounts. These are used when constructing connection strings
+for the Batch and Storage client objects. You can find these as explained here https://docs.microsoft.com/en-us/azure/batch/batch-account-create-portal#view-batch-account-properties
+
+Create a file with the following structure and replace the <> brackets and the text within them with the appropriate values 
+
+``
+[DEFAULT]
+_BATCH_ACCOUNT_NAME = <batch_account_name>
+_BATCH_ACCOUNT_KEY = <batch_account_key>
+_BATCH_ACCOUNT_URL = https://<batch_account_name>.<location>.batch.azure.com
+_STORAGE_ACCOUNT_NAME = <storage_account_name>
+_STORAGE_ACCOUNT_KEY = <storage_account_key>
+``
 
 ### VM sizes available
 
@@ -46,6 +68,8 @@ az batch pool supported-images list --output table
 
 
 ## Tools
+Azure allows you to do most things via the command line interface (cli) or the web console. However I have found the following
+desktop apps useful for working with these services.
 
 `Batch Explorer<https://azure.github.io/BatchExplorer/>`_ is a desktop tool for managing batch jobs, pools and application packages
 
@@ -65,8 +89,14 @@ and can be managed via the az command line options
 
 Model is considered to be something that :-
  - needs application packages, versions and the location of the binary directory (i.e. ApplicationPackage[])
- - needs input file(s), common ones or unique ones. These need to be uploaded to storage as blobs and then referenced
- - has output file(s), which are uploaded to the associated storage via directives to the batch service
+ - can have one or more input file(s), common ones or unique ones. 
+  * These need to be uploaded to storage as blobs and then referenced
+ - needs environment variables
+  * These are specified as name, value pairs (i.e. python dicts)
+ - can have output file(s), which are uploaded to the associated storage via directives to the batch service
+
+ If the input and output files are specified by the create...spec methods on *AzureBlob* then those are directives to the 
+ batch service to download the inputs and upload the outputs without writing specfic code.
 
 
 ## Model run
@@ -77,6 +107,9 @@ Model is considered to be something that :-
   - will have an output unique to it
   - could have a set of unique input files
   - could have environment settings unique to each run
+
+See the (notebooks/sample_submit_dsm2_hydro_version.ipynb) for a simple example
+The samples explain step by step and can be used as a template for writing your own batch run
 
 ## Parameterized runs
 
