@@ -45,7 +45,7 @@ Update the Batch and Storage account credential strings below with the values
 unique to your accounts. These are used when constructing connection strings
 for the Batch and Storage client objects. You can find these as explained here https://docs.microsoft.com/en-us/azure/batch/batch-account-create-portal#view-batch-account-properties
 
-Create a file with the following structure and replace the <> brackets and the text within them with the appropriate values 
+Create a file with the following structure and replace the <> brackets and the text within them with the appropriate values. See [this code](dmsbatch/commands.py#L17) for more details
 
 ```
 [DEFAULT]
@@ -83,11 +83,11 @@ desktop apps useful for working with these services.
 
 There are two classes in batch.commands
 
-*AzureBlob* to work with uploading/downloading to blobs
-*AzureBatch* to work with pools, jobs and tasks. Depends upon *AzureBlob* but not other way around
+* [*AzureBlob*](dmsbatch/commands.py#L604) to work with uploading/downloading to blobs
 
-Management of batch resources such as creation of batch account, storage account, etc is a low repeat activity 
-and can be managed via the az command line options
+* [*AzureBatch*](dmsbatch/commands.py#L120) to work with pools, jobs and tasks. Depends upon [*AzureBlob*](dmsbatch/commands.py#L604) but not other way around
+
+Management of batch resources such as creation of batch account, storage account, etc is a low repeat activity and can be managed via the az command line options or web console.
 
 ## Model
 
@@ -99,8 +99,7 @@ Model is considered to be something that :-
   * These are specified as name, value pairs (i.e. python dicts)
  - can have output file(s), which are uploaded to the associated storage via directives to the batch service
 
- If the input and output files are specified by the create...spec methods on *AzureBlob* then those are directives to the 
- batch service to download the inputs and upload the outputs without writing specfic code.
+ If the input and output files are specified by the [create...spec](dmsbatch/commands.py#L265) methods on *AzureBatch* then those are directives to the  batch service to download the inputs and upload the outputs without writing specfic code.
 
 
 ## Model run
