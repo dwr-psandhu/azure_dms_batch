@@ -112,12 +112,12 @@ Model is considered to be something that :-
   - could have a set of unique input files
   - could have environment settings unique to each run
 
-See the [sample notebooks](notebooks/) for examples
+See the [sample notebooks](./notebooks/) for examples
 The samples explain step by step and can be used as a template for writing your own batch run
 
-The [simplest example](notebooks\sample_submit_dsm2_hydro_version.ipynb) is a run of dsm2 hydro outputting its version
+The [simplest example](./notebooks/sample_submit_dsm2_hydro_version.ipynb) is a run of dsm2 hydro outputting its version
 
-A [slightly more involved example](notebooks\sample_submit_dsm2_historical.ipynb) is a run of dsm2 hydro that uploads the input files as a zip and then uploads the output directory next to the uploaded input files at the end of the run
+A [slightly more involved example](./notebooks/sample_submit_dsm2_historical.ipynb) is a run of dsm2 hydro that uploads the input files as a zip and then uploads the output directory next to the uploaded input files at the end of the run
 
 ## Parameterized runs
 
@@ -131,7 +131,7 @@ A [slightly more involved example](notebooks\sample_submit_dsm2_historical.ipynb
 
  In each case, the model run is expressed as a *task*
 
- An [example of this](notebooks\sample_submit_ptm_batch.ipynb) demos it for PTM batch runs that vary based on environment variables. It also shows an example where a large file needs to be uploaded and shared with all the running tasks
+ An [example of this](./notebooks/sample_submit_ptm_batch.ipynb) demos it for PTM batch runs that vary based on environment variables. It also shows an example where a large file needs to be uploaded and shared with all the running tasks
 
 ## Beopest runs
 
@@ -145,4 +145,4 @@ A [slightly more involved example](notebooks\sample_submit_dsm2_historical.ipynb
  multiple slaves as batch runs.  beopest master should then be able to register these slave tasks as they come in and 
  submit runs to them through its own mechanism (MPI). 
  
- This [notebook](notebooks\sample_submit_beopest.ipynb) shows an implementation of the scheme above.
+ This [notebook](./notebooks/sample_submit_beopest.ipynb) shows an implementation of the scheme above.
