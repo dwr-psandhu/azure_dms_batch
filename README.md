@@ -11,15 +11,15 @@ variables and produces a set of output files.
 
 This module is currently tested with "Windows" based exes but shoud be easily adapatable to "Linux"
 
-## Setup 
+# Setup 
 
 Setup can be done via az commands. Here we setup a batch account with associated storage
 
-### Login with your Azure credentials
+## Login with your Azure credentials
 
 ```az login ```
 
-### Create a resource group in the desired location
+## Create a resource group in the desired location
 
 See the Azure docs for details. To use the commands below, enter your values (replacing the angle brackets and values)
 
@@ -31,7 +31,7 @@ See the Azure docs for details. To use the commands below, enter your values (re
 
 You can also create the batch account and associated account as explained here https://docs.microsoft.com/en-us/azure/batch/batch-account-create-portal
 
-### Applications
+## Applications
 
 Applications are binary executable packages. These are uploaded as application packages with a version number. A pool can be specified
 so that these application packages are pre-downloaded to the nodes of the pool before a job/tasks are run on it.
@@ -56,13 +56,17 @@ _STORAGE_ACCOUNT_NAME = <storage_account_name>
 _STORAGE_ACCOUNT_KEY = <storage_account_key>
 ```
 
-### VM sizes available
+## VM sizes available
 
 This is needed later when deciding what machine sizes to use
 
 ```az batch location list-skus --location <location_name> --output table```
 
-### OS Images available
+You can also browse [the availability by region](https://azure.microsoft.com/en-us/global-infrastructure/services/?regions=us-west-2&products=virtual-machines) as not all VMs are available in every region
+
+This [page is to guide selection of VMs](https://azure.microsoft.com/en-us/pricing/vm-selector/) by different attributes
+
+## OS Images available
 
 ```
 set AZ_BATCH_ACCOUNT=<batch_account_name>
@@ -70,8 +74,9 @@ set AZ_BATCH_ACCESS_KEY=<batch_account_key>
 set AZ_BATCH_ENDPOINT=<batch_account_url>
 az batch pool supported-images list --output table
 ```
+A [sample output](notebooks/osimage.list.txt) is included for quick reference 
 
-## Tools
+# Tools
 Azure allows you to do most things via the command line interface (cli) or the web console. However I have found the following
 desktop apps useful for working with these services.
 
@@ -79,7 +84,7 @@ desktop apps useful for working with these services.
 
 [Storage Explorer](https://azure.microsoft.com/en-us/features/storage-explorer/) is a desktop tool for working with storage containers
 
-## Classes
+# Classes
 
 There are two classes in batch.commands
 
@@ -110,6 +115,8 @@ Model is considered to be something that :-
   - will have an output unique to it
   - could have a set of unique input files
   - could have environment settings unique to each run
+
+# Sample Notebooks
 
 See the [sample notebooks](./notebooks/) for examples
 The samples explain step by step and can be used as a template for writing your own batch run
@@ -145,3 +152,36 @@ A [slightly more involved example](./notebooks/sample_submit_dsm2_historical.ipy
  submit runs to them through its own mechanism (MPI). 
  
  This [notebook](./notebooks/sample_submit_beopest.ipynb) shows an implementation of the scheme above.
+
+ ## MPI runs
+
+ SCHISM is a multi dimensional model that uses multiple cores and multiple hosts for computation. These are networked
+ computers that form "clusters" using MPI for communication. 
+ This [notebook](./notebooks/sample_submit_hello_schism.ipynb) demos the setup. Some of the 
+ differences are :-
+ * Use multi-instance tasks using AZ_BATCH_HOST_LIST to get list of networked hosts available
+ * Use H series VMs capable of leveraging Infiniband (though other VM/os combinations may work)
+ * Use Linux OS with *HPC images with appropriate device drivers
+ 
+# References
+
+[Python SDK Setup](https://docs.microsoft.com/en-us/azure/developer/python/azure-sdk-overview)
+
+[BlobStorage Python Example](https://github.com/Azure/azure-sdk-for-python/tree/main/sdk/storage/azure-storage-blob)
+
+[Azure Batch Python API](https://docs.microsoft.com/en-us/python/api/overview/azure/batch?view=azure-python)
+
+[Azure Batch Python Samples](https://github.com/Azure-Samples/azure-batch-samples/tree/master/Python)
+
+[Azure Batch Shipyard](https://github.com/Azure/batch-shipyard)
+
+## MPI specific
+
+[Azure Batch MPI](https://docs.microsoft.com/en-us/azure/batch/batch-mpi)
+
+[Cluster configuration options](https://docs.microsoft.com/en-us/azure/virtual-machines/sizes-hpc#cluster-configuration-options)
+
+### Intel MPI
+[Azure settings for Intel MPI](https://docs.microsoft.com/en-us/azure/virtual-machines/workloads/hpc/setup-mpi#intel-mpi)
+
+[Intel MPI Pre-requisites](https://www.intel.com/content/www/us/en/develop/documentation/mpi-developer-guide-linux/top/installation-and-prerequisites/prerequisite-steps.html)
