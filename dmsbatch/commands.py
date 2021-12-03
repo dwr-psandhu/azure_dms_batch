@@ -3,6 +3,7 @@
 import configparser
 import datetime
 import shutil
+import sys
 import os
 import io
 import time
@@ -45,9 +46,9 @@ _STORAGE_ACCOUNT_KEY = <storage_account_key>
 
 def load_config(config_file):
     """
-    Loads config file with a 'DEFAULT' section. See configparser 
+    Loads config file with a 'DEFAULT' section. See configparser
 
-    Config file contains a default section. To generate an empty one use the 
+    Config file contains a default section. To generate an empty one use the
     generate_blank_config(config_file) method
 
     Parameters
@@ -107,7 +108,7 @@ def create_blob_client(config_file):
 
 
 """
-AzureBatch manages batch pools, jobs and task submissions along with 
+AzureBatch manages batch pools, jobs and task submissions along with
 uploading input files and specifiying output files and environment variables needed to run batch jobs on Azure
 
 Management of batch accounts, application packages are either done manually or separately by other scripts
@@ -155,12 +156,251 @@ class AzureBatch:
         if not pool_created:
             self.resize_pool(pool_id, pool_size)
 
+    def create_pool_and_wait_for_vms(
+            self, pool_id,
+            publisher, offer, sku, vm_size,
+            target_dedicated_nodes,
+            command_line=None, resource_files=None,
+            elevation_level=batchmodels.ElevationLevel.admin):
+        """
+        Creates a pool of compute nodes with the specified OS settings.
+
+        :param batch_service_client: A Batch service client.
+        :type batch_service_client: `azure.batch.BatchServiceClient`
+        :param str pool_id: An ID for the new pool.
+        :param str publisher: Marketplace Image publisher
+        :param str offer: Marketplace Image offer
+        :param str sku: Marketplace Image sku
+        :param str vm_size: The size of VM, eg 'Standard_A1' or 'Standard_D1' per
+        https://azure.microsoft.com/en-us/documentation/articles/
+        virtual-machines-windows-sizes/
+        :param int target_dedicated_nodes: Number of target VMs for the pool
+        :param str command_line: command line for the pool's start task.
+        :param list resource_files: A collection of resource files for the pool's
+        start task.
+        :param str elevation_level: Elevation level the task will be run as;
+            either 'admin' or 'nonadmin'.
+        """
+        print('Creating pool [{}]...'.format(pool_id))
+
+        # Create a new pool of Linux compute nodes using an Azure Virtual Machines
+        # Marketplace image. For more information about creating pools of Linux
+        # nodes, see:
+        # https://azure.microsoft.com/documentation/articles/batch-linux-nodes/
+
+        # Get the virtual machine configuration for the desired distro and version.
+        # For more information about the virtual machine configuration, see:
+        # https://azure.microsoft.com/documentation/articles/batch-linux-nodes/
+        sku_to_use, image_ref_to_use = \
+            self.select_latest_verified_vm_image_with_node_agent_sku(
+                publisher, offer, sku)
+        user = batchmodels.AutoUserSpecification(
+            scope=batchmodels.AutoUserScope.pool,
+            elevation_level=elevation_level)
+        new_pool = batch.models.PoolAddParameter(
+            id=pool_id,
+            virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
+                image_reference=image_ref_to_use,
+                node_agent_sku_id=sku_to_use),
+            vm_size=vm_size,
+            target_dedicated_nodes=target_dedicated_nodes,
+            resize_timeout=datetime.timedelta(minutes=15),
+            enable_inter_node_communication=True,
+            start_task=batch.models.StartTask(
+                command_line=command_line,
+                user_identity=batchmodels.UserIdentity(auto_user=user),
+                wait_for_success=True,
+                resource_files=resource_files) if command_line else None,
+        )
+
+        self.create_pool_if_not_exist(new_pool)
+
+        # because we want all nodes to be available before any tasks are assigned
+        # to the pool, here we will wait for all compute nodes to reach idle
+        nodes = self.wait_for_all_nodes_state(
+            new_pool,
+            frozenset(
+                (batchmodels.ComputeNodeState.start_task_failed,
+                batchmodels.ComputeNodeState.unusable,
+                batchmodels.ComputeNodeState.idle)
+            )
+        )
+        # ensure all node are idle
+        if any(node.state != batchmodels.ComputeNodeState.idle for node in nodes):
+            raise RuntimeError('node(s) of pool {} not in idle state'.format(
+                pool_id))
+
+    def add_task(
+            self, job_id, task_id, num_instances,
+            application_cmdline, input_files, elevation_level,
+            output_file_names, output_container_sas,
+            coordination_cmdline, common_files):
+        """
+        Adds a task for each input file in the collection to the specified job.
+
+        :param batch_service_client: A Batch service client.
+        :type batch_service_client: `azure.batch.BatchServiceClient`
+        :param str job_id: The ID of the job to which to add the task.
+        :param str task_id: The ID of the task to be added.
+        :param str application_cmdline: The application commandline for the task.
+        :param list input_files: A collection of input files.
+        :param elevation_level: Elevation level used to run the task; either
+        'admin' or 'nonadmin'.
+        :type elevation_level: `azure.batch.models.ElevationLevel`
+        :param int num_instances: Number of instances for the task
+        :param str coordination_cmdline: The application commandline for the task.
+        :param list common_files: A collection of common input files.
+        """
+
+        print('Adding {} task to job [{}]...'.format(task_id, job_id))
+
+        multi_instance_settings = None
+        if coordination_cmdline or (num_instances and num_instances > 1):
+            multi_instance_settings = batchmodels.MultiInstanceSettings(
+                number_of_instances=num_instances,
+                coordination_command_line=coordination_cmdline,
+                common_resource_files=common_files)
+        user = batchmodels.AutoUserSpecification(
+            scope=batchmodels.AutoUserScope.pool,
+            elevation_level=elevation_level)
+        output_file = batchmodels.OutputFile(
+            file_pattern=output_file_names,
+            destination=batchmodels.OutputFileDestination(
+                container=batchmodels.OutputFileBlobContainerDestination(
+                    container_url=output_container_sas)),
+            upload_options=batchmodels.OutputFileUploadOptions(
+                upload_condition=batchmodels.
+                OutputFileUploadCondition.task_completion))
+        task = batchmodels.TaskAddParameter(
+            id=task_id,
+            command_line=application_cmdline,
+            user_identity=batchmodels.UserIdentity(auto_user=user),
+            resource_files=input_files,
+            multi_instance_settings=multi_instance_settings,
+            output_files=[output_file])
+        self.batch_client.task.add(job_id, task)
+
+    def wait_for_subtasks_to_complete(
+            self, job_id, task_id, timeout):
+        """
+        Returns when all subtasks in the specified task reach the Completed state.
+
+        :param batch_service_client: A Batch service client.
+        :type batch_service_client: `azure.batch.BatchServiceClient`
+        :param str job_id: The id of the job whose tasks should be to monitored.
+        :param str task_id: The id of the task whose subtasks should be monitored.
+        :param timedelta timeout: The duration to wait for task completion. If all
+        tasks in the specified job do not reach Completed state within this time
+        period, an exception will be raised.
+        """
+        timeout_expiration = datetime.datetime.now() + timeout
+
+        print("Monitoring all tasks for 'Completed' state, timeout in {}..."
+            .format(timeout), end='')
+
+        while datetime.datetime.now() < timeout_expiration:
+            print('.', end='')
+            sys.stdout.flush()
+
+            subtasks = self.batch_client.task.list_subtasks(job_id, task_id)
+            incomplete_subtasks = [subtask for subtask in subtasks.value if
+                                subtask.state !=
+                                batchmodels.TaskState.completed]
+
+            if not incomplete_subtasks:
+                print()
+                return True
+            else:
+                time.sleep(10)
+
+        print()
+        raise RuntimeError(
+            "ERROR: Subtasks did not reach 'Completed' state within "
+            "timeout period of " + str(timeout))
+
+    def wait_for_tasks_to_complete(self, job_id, timeout):
+        """
+        Returns when all tasks in the specified job reach the Completed state.
+
+        :param batch_service_client: A Batch service client.
+        :type batch_service_client: `azure.batch.BatchServiceClient`
+        :param str job_id: The id of the job whose tasks should be to monitored.
+        :param timedelta timeout: The duration to wait for task completion. If all
+        tasks in the specified job do not reach Completed state within this time
+        period, an exception will be raised.
+        """
+        timeout_expiration = datetime.datetime.now() + timeout
+
+        print("Monitoring all tasks for 'Completed' state, timeout in {}..."
+            .format(timeout), end='')
+
+        while datetime.datetime.now() < timeout_expiration:
+            print('.', end='')
+            sys.stdout.flush()
+            tasks = self.batch_client.task.list(job_id)
+
+            for task in tasks:
+                if task.state == batchmodels.TaskState.completed:
+                    # Pause execution until subtasks reach Completed state.
+                    self.wait_for_subtasks_to_complete(job_id,
+                                                task.id,
+                                                datetime.timedelta(minutes=10))
+
+            incomplete_tasks = [task for task in tasks if
+                                task.state != batchmodels.TaskState.completed]
+            if not incomplete_tasks:
+                print()
+                return True
+            else:
+                time.sleep(10)
+
+        print()
+        raise RuntimeError("ERROR: Tasks did not reach 'Completed' state within "
+                        "timeout period of " + str(timeout))
+
+    def wait_for_all_nodes_state(self, pool_id, node_state):
+        """Waits for all nodes in pool to reach any specified state in set
+
+        :param batch_client: The batch client to use.
+        :type batch_client: `batchserviceclient.BatchServiceClient`
+        :param pool: The pool containing the node.
+        :type pool: `batchserviceclient.models.CloudPool`
+        :param set node_state: node states to wait for
+        :rtype: list
+        :return: list of `batchserviceclient.models.ComputeNode`
+        """
+        print('waiting for all nodes in pool {} to reach one of: {!r}'.format(
+            pool_id, node_state))
+        i = 0
+        while True:
+            # refresh pool to ensure that there is no resize error
+            pool = self.batch_client.pool.get(pool_id)
+            if pool.resize_errors is not None:
+                resize_errors = "\n".join([repr(e) for e in pool.resize_errors])
+                raise RuntimeError(
+                    'resize error encountered for pool {}:\n{}'.format(
+                        pool.id, resize_errors))
+            nodes = list(self.batch_client.compute_node.list(pool.id))
+            if (len(nodes) >= pool.target_dedicated_nodes and
+                    all(node.state in node_state for node in nodes)):
+                return nodes
+            i += 1
+            if i % 3 == 0:
+                print('waiting for {} nodes to reach desired state...'.format(
+                    pool.target_dedicated_nodes))
+            time.sleep(10)
+
     def create_pool(self, pool_id, pool_size,
             vm_size='standard_f4s_v2',
             tasks_per_vm=4,
             os_image_data=('microsoftwindowsserver', 'windowsserver', '2019-datacenter-core'),
             app_packages=[('dsm2', '8.2.1')],
-            start_task_cmd="cmd /c set"):
+            start_task_cmd="cmd /c set",
+            start_task_admin=False,
+            resource_files=None,
+            elevation_level=batchmodels.ElevationLevel.admin,
+            enable_inter_node_communication=False,
+            wait_for_success=False):
         """Create or if exists then resize pool to desired pool_size
 
         Args:
@@ -176,6 +416,13 @@ class AzureBatch:
         # applications needed here
         app_references = [batchmodels.ApplicationPackageReference(
             application_id=app[0], version=app[1]) for app in app_packages]
+        if start_task_admin:
+            user_identity = batchmodels.UserIdentity(
+                auto_user=batchmodels.AutoUserSpecification(
+                    scope=batchmodels.AutoUserScope.pool,
+                    elevation_level=elevation_level))
+        else:
+            user_identity = batchmodels.UserIdentity()
         pool = batchmodels.PoolAddParameter(
             id=pool_id,
             virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
@@ -183,9 +430,16 @@ class AzureBatch:
                 node_agent_sku_id=sku_to_use),
             vm_size=vm_size,
             target_dedicated_nodes=vm_count,
-            task_slots_per_node=tasks_per_vm,
+            max_tasks_per_node=1 if enable_inter_node_communication else tasks_per_vm,
+            task_slots_per_node=1 if enable_inter_node_communication else tasks_per_vm,
+            resize_timeout=datetime.timedelta(minutes=15),
+            enable_inter_node_communication=enable_inter_node_communication,
             application_package_references=app_references,
-            start_task=batchmodels.StartTask(command_line=start_task_cmd), )
+            start_task=batchmodels.StartTask(command_line=start_task_cmd,
+                                            user_identity=user_identity,
+                                            wait_for_success=wait_for_success,
+                                            resource_files=resource_files) if start_task_cmd else None
+        )
         pool_created = self.create_pool_if_not_exist(pool)
         return pool_created
 
@@ -193,6 +447,22 @@ class AzureBatch:
         pool_resize_param = batchmodels.PoolResizeParameter(
             target_dedicated_nodes=pool_size)  # scale it down to zero
         self.batch_client.pool.resize(pool_id, pool_resize_param)
+
+    def wait_for_pool_nodes(self, pool_id):
+        # because we want all nodes to be available before any tasks are assigned
+        # to the pool, here we will wait for all compute nodes to reach idle
+        nodes = self.wait_for_all_nodes_state(
+            pool_id,
+            frozenset(
+                (batchmodels.ComputeNodeState.start_task_failed,
+                batchmodels.ComputeNodeState.unusable,
+                batchmodels.ComputeNodeState.idle)
+            )
+        )
+        # ensure all node are idle
+        if any(node.state != batchmodels.ComputeNodeState.idle for node in nodes):
+            raise RuntimeError('node(s) of pool {} not in idle state'.format(
+                pool_id))
 
     def create_pool_if_not_exist(self, pool):
         """Creates the specified pool if it doesn't already exist
@@ -237,7 +507,7 @@ class AzureBatch:
                 'windows', f'move {file_path}\\{blob_path} %AZ_BATCH_NODE_SHARED_DIR%')
         else:
             self.wrap_commands_in_shell(
-                'linux', f'mv {file_path}/{blob_path} ${AZ_BATCH_NODE_SHARED_DIR}')
+                'linux', f'mv {file_path}/{blob_path}' + ' ${AZ_BATCH_NODE_SHARED_DIR}')
 
         prep_task = batchmodels.JobPreparationTask(
             id="copy_file_task",
@@ -282,7 +552,7 @@ class AzureBatch:
         """
         Creates a job with the specified ID, associated with the specified pool.
 
-        :param batch_service_client: A Batch service client.`azure.batch.BatchServiceClient` 
+        :param batch_service_client: A Batch service client.`azure.batch.BatchServiceClient`
         :param str job_id: The ID for the job.
         :param str pool_id: The ID for the pool.
         :param JobPreparationTask: preparation task before running tasks in the job
@@ -299,11 +569,12 @@ class AzureBatch:
     def delete_job(self, job_id):
         raise 'TBD'
 
-    def create_task(self, task_id, command, resource_files=None, output_files=None, env_settings=None):
+    def create_task(self, task_id, command, resource_files=None, output_files=None, env_settings=None,
+            elevation_level=None, num_instances=1, coordination_cmdline=None, coordination_files=None):
         """Create a task for the given input_file, command, output file specs and environment settings.
 
         Args:
-            task_id(str) : a unique string to the task id 
+            task_id(str) : a unique string to the task id
             command (str): command to execute task. Specific to the OS (e.g. batch file for windows)
             input_file (batchmodels.ResourceFile): Specifies an input file from the storage container blob
             output_files (batchmodels.OutputFile): The output file patterns that will be copied to the storage blob upon success
@@ -312,12 +583,23 @@ class AzureBatch:
 
         environment_settings = None if env_settings is None else [
             batch.models.EnvironmentSetting(name=key, value=env_settings[key]) for key in env_settings]
+        multi_instance_settings = None
+        if coordination_cmdline or (num_instances and num_instances > 1):
+            multi_instance_settings = batchmodels.MultiInstanceSettings(
+                number_of_instances=num_instances,
+                coordination_command_line=coordination_cmdline,
+                common_resource_files=coordination_files)
+        user = batchmodels.AutoUserSpecification(
+            scope=batchmodels.AutoUserScope.pool,
+            elevation_level=elevation_level)
         return batch.models.TaskAddParameter(
                 id=task_id,
                 command_line=command,
+                user_identity=batchmodels.UserIdentity(auto_user=user),
                 resource_files=resource_files,
                 environment_settings=environment_settings,
-                output_files=output_files
+                output_files=output_files,
+                multi_instance_settings=multi_instance_settings
             )
 
     def submit_tasks(self, job_id, tasks):
@@ -400,7 +682,7 @@ class AzureBatch:
 
         return
 
-    def set_path_to_apps(self, apps):
+    def set_path_to_apps(self, apps, ostype='windows'):
         """create cmd to set path to apps binary locations
 
         Parameters
@@ -426,10 +708,18 @@ class AzureBatch:
         'set "PATH=%AZ_BATCH_APP_PACKAGE_dsm2#8.2.c5aacef7%/DSM2-8.2.c5aacef7-win32/bin;%AZ_BATCH_APP_PACKAGE_vista#1.0-v2019-05-28%/bin;%AZ_BATCH_APP_PACKAGE_unzip#5.51-1%/bin;%PATH%"'
         `
         """
-        app_loc_var = ['%AZ_BATCH_APP_PACKAGE_{app_name}#{app_version}%/{bin_loc}'.format(
-            app_name=name, app_version=version, bin_loc=bin_loc) for name, version, bin_loc in apps]
-        env_var_path = ";".join(app_loc_var)
-        cmd = 'set "PATH={env_var_path};%PATH%"'.format(env_var_path=env_var_path)
+        if ostype == 'windows':
+            app_loc_var = ['%AZ_BATCH_APP_PACKAGE_{app_name}#{app_version}%/{bin_loc}'.format(
+                app_name=name, app_version=version, bin_loc=bin_loc) for name, version, bin_loc in apps]
+            env_var_path = ";".join(app_loc_var)
+            cmd = 'set "PATH={env_var_path};%PATH%"'.format(env_var_path=env_var_path)
+        elif ostype == 'linux':
+            app_loc_var = ['${' + 'AZ_BATCH_APP_PACKAGE_{app_name}_{app_version}{brace}/{bin_loc}'.format(
+                app_name=name, app_version=version, brace='}', bin_loc=bin_loc) for name, version, bin_loc in apps]
+            env_var_path = ":".join(app_loc_var)
+            cmd = "export PATH={env_var_path}:$PATH".format(env_var_path=env_var_path)
+        else:
+            raise Exception(f'unknown ostype: {ostype}')
         return cmd
 
     def wrap_cmd_with_app_path(self, cmd, app_pkgs, ostype='windows'):
@@ -455,12 +745,16 @@ class AzureBatch:
         """
         if ostype == 'windows':
             cmd_string = 'cmd /c '
-            cmd_string += self.set_path_to_apps(app_pkgs)
+            cmd_string += self.set_path_to_apps(app_pkgs, ostype=ostype)
             cmd_string += ' & '
             cmd_string += cmd
             return cmd_string
         elif ostype == 'linux':
-            raise "TBD"
+            cmd_string = '/bin/bash -c \''
+            cmd_string += self.set_path_to_apps(app_pkgs, ostype=ostype)
+            cmd_string += '; '
+            cmd_string += cmd + '\''
+            return cmd_string
         else:
             raise f'unsupported ostype: {ostype}, only "windows" supported'
 
@@ -626,8 +920,7 @@ class AzureBlob:
         # Obtain the SAS token for the container, setting the expiry time and
         # permissions. In this case, no start time is specified, so the shared
         # access signature becomes valid immediately. Expiration is in 2 hours.
-        container_sas_token = \
-            self.blob_client.generate_container_shared_access_signature(
+        container_sas_token = self.blob_client.generate_container_shared_access_signature(
                 container_name,
                 permission=blob_permissions,
                 expiry=datetime.datetime.utcnow() + datetime.timedelta(hours=2))
@@ -637,7 +930,7 @@ class AzureBlob:
     def get_container_sas_url(self,
                             container_name, blob_permissions):
         """
-        Obtains a shared access signature URL that provides write access to the 
+        Obtains a shared access signature URL that provides write access to the
         ouput container to which the tasks will upload their output.
 
         :param block_blob_client: A blob service client.
@@ -788,7 +1081,7 @@ class AzureBlob:
         blob_name : str
             name of blob in the storage container
         dirname : str
-            path to the directory 
+            path to the directory
         timeout : int, optional
             timeout in minutes, by default 30
 
@@ -796,7 +1089,7 @@ class AzureBlob:
         -------
         ResourceFile
             a resource file containing information on what was uploaded.
-        """        
+        """
         try:
             zipfile = os.path.basename(dirname)
             shutil.make_archive(zipfile, 'zip', dirname)
@@ -833,4 +1126,3 @@ class AzureBlob:
 
         logging.info('  Download complete!')
     #
-
