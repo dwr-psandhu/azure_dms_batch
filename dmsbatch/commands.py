@@ -430,7 +430,8 @@ class AzureBatch:
                 node_agent_sku_id=sku_to_use),
             vm_size=vm_size,
             target_dedicated_nodes=vm_count,
-            max_tasks_per_node=1 if enable_inter_node_communication else tasks_per_vm,
+            # not understood but carried from an example maybe outdated ?
+            #max_tasks_per_node=1 if enable_inter_node_communication else tasks_per_vm, 
             task_slots_per_node=1 if enable_inter_node_communication else tasks_per_vm,
             resize_timeout=datetime.timedelta(minutes=15),
             enable_inter_node_communication=enable_inter_node_communication,
@@ -715,7 +716,7 @@ class AzureBatch:
             cmd = 'set "PATH={env_var_path};%PATH%"'.format(env_var_path=env_var_path)
         elif ostype == 'linux':
             app_loc_var = ['${' + 'AZ_BATCH_APP_PACKAGE_{app_name}_{app_version}{brace}/{bin_loc}'.format(
-                app_name=name, app_version=version, brace='}', bin_loc=bin_loc) for name, version, bin_loc in apps]
+                app_name=name.replace('.','_'), app_version=version.replace('.','_'), brace='}', bin_loc=bin_loc) for name, version, bin_loc in apps]
             env_var_path = ":".join(app_loc_var)
             cmd = "export PATH={env_var_path}:$PATH".format(env_var_path=env_var_path)
         else:
