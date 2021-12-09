@@ -1,7 +1,8 @@
 startingNumberOfVMs = 1;
-maxNumberofVMs = 5;
+maxNumberofVMs = 60;
 pendingTaskSamplePercent = $PendingTasks.GetSamplePercent(60 * TimeInterval_Second);
 pendingTasksAvg = avg($PendingTasks.GetSample(60 * TimeInterval_Second));
 pendingTaskSamples = pendingTaskSamplePercent < 70 ? startingNumberOfVMs : pendingTasksAvg;
 $TargetDedicatedNodes=min(maxNumberofVMs, pendingTaskSamples);
+//$TargetLowPriorityNodes=min(maxNumberofVMs, pendingTaskSamples);
 $NodeDeallocationOption = taskcompletion;
