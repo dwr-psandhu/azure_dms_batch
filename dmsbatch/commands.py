@@ -129,9 +129,100 @@ class AzureBatch:
             self.credentials,
             batch_url=batch_account_url)
 
-    def submit_tasks_and_wait(self, job_id, tasks, wait_time_mins=30, poll_secs=5):
-        self.submit_tasks_and_wait(job_id,
-                                    tasks, wait_time_mins=wait_time_mins, poll_secs=poll_secs)
+    def create_pool(self, pool_id, pool_size,
+            vm_size='standard_f4s_v2',
+            tasks_per_vm=4,
+            os_image_data=('microsoftwindowsserver', 'windowsserver', '2019-datacenter-core'),
+            app_packages=[('dsm2', '8.2.1')],
+            start_task_cmd="cmd /c set",
+            start_task_admin=False,
+            resource_files=None,
+            elevation_level=batchmodels.ElevationLevel.admin,
+            enable_inter_node_communication=False,
+            wait_for_success=False):
+        """Create or if exists then resize pool to desired pool_size
+
+        Args:
+            pool_id (str): pool id
+            pool_size (int): pool size in number of vms (cores per vm may depend on machine type here)
+            vm_size: name of vm, default standard_f4s_v2
+            tasks_per_vm (default 4): this is tied to the number of cores on the vm_size above. if your task needs 1 cpu per task set this to number of cores
+        """
+        vm_count = pool_size
+        # choosing windows machine here (just the core windows, it has no other apps on it including explorer)
+        sku_to_use, image_ref_to_use = self.select_latest_verified_vm_image_with_node_agent_sku(
+            *os_image_data)
+        # applications needed here
+        app_references = [batchmodels.ApplicationPackageReference(
+            application_id=app[0], version=app[1]) for app in app_packages]
+        if start_task_admin:
+            user_identity = batchmodels.UserIdentity(
+                auto_user=batchmodels.AutoUserSpecification(
+                    scope=batchmodels.AutoUserScope.pool,
+                    elevation_level=elevation_level))
+        else:
+            user_identity = batchmodels.UserIdentity()
+        pool = batchmodels.PoolAddParameter(
+            id=pool_id,
+            virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
+                image_reference=image_ref_to_use,
+                node_agent_sku_id=sku_to_use),
+            vm_size=vm_size,
+            target_dedicated_nodes=vm_count,
+            # not understood but carried from an example maybe outdated ?
+            #max_tasks_per_node=1 if enable_inter_node_communication else tasks_per_vm,
+            task_slots_per_node=1 if enable_inter_node_communication else tasks_per_vm,
+            resize_timeout=datetime.timedelta(minutes=15),
+            enable_inter_node_communication=enable_inter_node_communication,
+            application_package_references=app_references,
+            start_task=batchmodels.StartTask(command_line=start_task_cmd,
+                                            user_identity=user_identity,
+                                            wait_for_success=wait_for_success,
+                                            resource_files=resource_files) if start_task_cmd else None
+        )
+        pool_created = self.create_pool_if_not_exist(pool)
+        return pool_created
+
+    def resize_pool(self, pool_id, pool_size):
+        pool_resize_param = batchmodels.PoolResizeParameter(
+            target_dedicated_nodes=pool_size)  # scale it down to zero
+        self.batch_client.pool.resize(pool_id, pool_resize_param)
+
+    def wait_for_pool_nodes(self, pool_id):
+        # because we want all nodes to be available before any tasks are assigned
+        # to the pool, here we will wait for all compute nodes to reach idle
+        nodes = self.wait_for_all_nodes_state(
+            pool_id,
+            frozenset(
+                (batchmodels.ComputeNodeState.start_task_failed,
+                batchmodels.ComputeNodeState.unusable,
+                batchmodels.ComputeNodeState.idle)
+            )
+        )
+        # ensure all node are idle
+        if any(node.state != batchmodels.ComputeNodeState.idle for node in nodes):
+            raise RuntimeError('node(s) of pool {} not in idle state'.format(
+                pool_id))
+
+    def create_pool_if_not_exist(self, pool):
+        """Creates the specified pool if it doesn't already exist
+
+        :param batch_client: The batch client to use.
+        :type batch_client: `batchserviceclient.BatchServiceClient`
+        :param pool: The pool to create.
+        :type pool: `batchserviceclient.models.PoolAddParameter`
+        """
+        try:
+            logging.info("Attempting to create pool:", pool.id)
+            self.batch_client.pool.add(pool)
+            logging.info("Created pool:", pool.id)
+            return True
+        except batchmodels.BatchErrorException as e:
+            if e.error.code != "PoolExists":
+                raise
+            else:
+                logging.info("Pool {!r} already exists".format(pool.id))
+                return False
 
     def create_or_resize_pool(self, pool_id, pool_size,
             vm_size='standard_f4s_v2',
@@ -229,6 +320,94 @@ class AzureBatch:
         if any(node.state != batchmodels.ComputeNodeState.idle for node in nodes):
             raise RuntimeError('node(s) of pool {} not in idle state'.format(
                 pool_id))
+
+    def create_job(self, job_id, pool_id, prep_task=None):
+        """
+        Creates a job with the specified ID, associated with the specified pool.
+
+        :param batch_service_client: A Batch service client.`azure.batch.BatchServiceClient`
+        :param str job_id: The ID for the job.
+        :param str pool_id: The ID for the pool.
+        :param JobPreparationTask: preparation task before running tasks in the job
+        """
+        logging.info('Creating job [{}]...'.format(job_id))
+
+        job = batch.models.JobAddParameter(
+            id=job_id,
+            job_preparation_task=prep_task,
+            pool_info=batch.models.PoolInformation(pool_id=pool_id))
+
+        self.batch_client.job.add(job)
+
+    def delete_job(self, job_id):
+        raise 'TBD'
+
+    def create_input_file_spec(self, container_name, blob_prefix, file_path='.'):
+        return batchmodels.ResourceFile(
+            auto_storage_container_name=container_name,
+            blob_prefix=blob_prefix,
+            file_path=file_path)
+
+    def create_output_file_spec(self, file_pattern, output_container_sas_url, blob_path='.'):
+        return batchmodels.OutputFile(
+            file_pattern=file_pattern,
+            destination=batchmodels.OutputFileDestination(
+                container=batchmodels.OutputFileBlobContainerDestination(
+                    container_url=output_container_sas_url, path=blob_path)),
+            upload_options=batchmodels.OutputFileUploadOptions(
+                upload_condition=batchmodels.OutputFileUploadCondition.task_success)
+        )
+
+    def create_prep_task(self, task_name, commands, resource_files=None, ostype='windows'):
+        """
+        Creates a task to copy file from container blob to shared directory on node.
+
+        Args:
+            container (str): Name of container in storage associate with the batch account
+            blob_path (str): Path to the blob within the container
+            file_path (str): Path to file on node
+            shared_dir (str, optional): share directory on node. Defaults to 'AZ_BATCH_NODE_SHARED_DIR'.
+            ostype (str, optional): windows or linux. Defaults to 'windows'
+        Returns:
+            batchmodels.JobPreparationTask: The preparation task
+        """
+
+        cmdline = self.wrap_commands_in_shell(ostype, commands)
+        prep_task = batchmodels.JobPreparationTask(
+            id=task_name,
+            command_line=cmdline,
+            resource_files=resource_files,
+            wait_for_success=True)
+
+        return prep_task
+
+    def create_task_copy_file_to_shared_dir(self, container, blob_path, file_path, shared_dir='AZ_BATCH_NODE_SHARED_DIR', ostype='windows'):
+        """
+        Creates a task to copy file from container blob to shared directory on node.
+
+        Args:
+            container (str): Name of container in storage associate with the batch account
+            blob_path (str): Path to the blob within the container
+            file_path (str): Path to file on node
+            shared_dir (str, optional): share directory on node. Defaults to 'AZ_BATCH_NODE_SHARED_DIR'.
+            ostype (str, optional): windows or linux. Defaults to 'windows'
+        Returns:
+            batchmodels.JobPreparationTask: The preparation task
+        """
+        input_file = batchmodels.ResourceFile(
+            auto_storage_container_name=container,
+            blob_prefix=blob_path,
+            file_path=file_path)
+
+        cmdline = ''
+        if ostype == 'windows':
+            cmdline = f'move {file_path}\\{blob_path} %AZ_BATCH_NODE_SHARED_DIR%'
+        else:
+            cmdline = f'mv {file_path}/{blob_path}' + ' ${AZ_BATCH_NODE_SHARED_DIR}'
+
+        prep_task = self.create_prep_task('copy_file_task', [cmdline], resource_files=[
+                                          input_file], ostype=ostype)
+        return prep_task
 
     def add_task(
             self, job_id, task_id, num_instances,
@@ -390,187 +569,6 @@ class AzureBatch:
                     pool.target_dedicated_nodes))
             time.sleep(10)
 
-    def create_pool(self, pool_id, pool_size,
-            vm_size='standard_f4s_v2',
-            tasks_per_vm=4,
-            os_image_data=('microsoftwindowsserver', 'windowsserver', '2019-datacenter-core'),
-            app_packages=[('dsm2', '8.2.1')],
-            start_task_cmd="cmd /c set",
-            start_task_admin=False,
-            resource_files=None,
-            elevation_level=batchmodels.ElevationLevel.admin,
-            enable_inter_node_communication=False,
-            wait_for_success=False):
-        """Create or if exists then resize pool to desired pool_size
-
-        Args:
-            pool_id (str): pool id
-            pool_size (int): pool size in number of vms (cores per vm may depend on machine type here)
-            vm_size: name of vm, default standard_f4s_v2
-            tasks_per_vm (default 4): this is tied to the number of cores on the vm_size above. if your task needs 1 cpu per task set this to number of cores
-        """
-        vm_count = pool_size
-        # choosing windows machine here (just the core windows, it has no other apps on it including explorer)
-        sku_to_use, image_ref_to_use = self.select_latest_verified_vm_image_with_node_agent_sku(
-            *os_image_data)
-        # applications needed here
-        app_references = [batchmodels.ApplicationPackageReference(
-            application_id=app[0], version=app[1]) for app in app_packages]
-        if start_task_admin:
-            user_identity = batchmodels.UserIdentity(
-                auto_user=batchmodels.AutoUserSpecification(
-                    scope=batchmodels.AutoUserScope.pool,
-                    elevation_level=elevation_level))
-        else:
-            user_identity = batchmodels.UserIdentity()
-        pool = batchmodels.PoolAddParameter(
-            id=pool_id,
-            virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
-                image_reference=image_ref_to_use,
-                node_agent_sku_id=sku_to_use),
-            vm_size=vm_size,
-            target_dedicated_nodes=vm_count,
-            # not understood but carried from an example maybe outdated ?
-            #max_tasks_per_node=1 if enable_inter_node_communication else tasks_per_vm,
-            task_slots_per_node=1 if enable_inter_node_communication else tasks_per_vm,
-            resize_timeout=datetime.timedelta(minutes=15),
-            enable_inter_node_communication=enable_inter_node_communication,
-            application_package_references=app_references,
-            start_task=batchmodels.StartTask(command_line=start_task_cmd,
-                                            user_identity=user_identity,
-                                            wait_for_success=wait_for_success,
-                                            resource_files=resource_files) if start_task_cmd else None
-        )
-        pool_created = self.create_pool_if_not_exist(pool)
-        return pool_created
-
-    def resize_pool(self, pool_id, pool_size):
-        pool_resize_param = batchmodels.PoolResizeParameter(
-            target_dedicated_nodes=pool_size)  # scale it down to zero
-        self.batch_client.pool.resize(pool_id, pool_resize_param)
-
-    def wait_for_pool_nodes(self, pool_id):
-        # because we want all nodes to be available before any tasks are assigned
-        # to the pool, here we will wait for all compute nodes to reach idle
-        nodes = self.wait_for_all_nodes_state(
-            pool_id,
-            frozenset(
-                (batchmodels.ComputeNodeState.start_task_failed,
-                batchmodels.ComputeNodeState.unusable,
-                batchmodels.ComputeNodeState.idle)
-            )
-        )
-        # ensure all node are idle
-        if any(node.state != batchmodels.ComputeNodeState.idle for node in nodes):
-            raise RuntimeError('node(s) of pool {} not in idle state'.format(
-                pool_id))
-
-    def create_pool_if_not_exist(self, pool):
-        """Creates the specified pool if it doesn't already exist
-
-        :param batch_client: The batch client to use.
-        :type batch_client: `batchserviceclient.BatchServiceClient`
-        :param pool: The pool to create.
-        :type pool: `batchserviceclient.models.PoolAddParameter`
-        """
-        try:
-            logging.info("Attempting to create pool:", pool.id)
-            self.batch_client.pool.add(pool)
-            logging.info("Created pool:", pool.id)
-            return True
-        except batchmodels.BatchErrorException as e:
-            if e.error.code != "PoolExists":
-                raise
-            else:
-                logging.info("Pool {!r} already exists".format(pool.id))
-                return False
-
-    def create_task_copy_file_to_shared_dir(self, container, blob_path, file_path, shared_dir='AZ_BATCH_NODE_SHARED_DIR', ostype='windows'):
-        """
-        Creates a task to copy file from container blob to shared directory on node.
-
-        Args:
-            container (str): Name of container in storage associate with the batch account
-            blob_path (str): Path to the blob within the container
-            file_path (str): Path to file on node
-            shared_dir (str, optional): share directory on node. Defaults to 'AZ_BATCH_NODE_SHARED_DIR'.
-            ostype (str, optional): windows or linux. Defaults to 'windows'
-        Returns:
-            batchmodels.JobPreparationTask: The preparation task
-        """
-        input_file = batchmodels.ResourceFile(
-            auto_storage_container_name=container,
-            blob_prefix=blob_path,
-            file_path=file_path)
-
-        cmdline = ''
-        if ostype == 'windows':
-            cmdline = self.wrap_commands_in_shell(
-                'windows', [f'move {file_path}\\{blob_path} %AZ_BATCH_NODE_SHARED_DIR%'])
-        else:
-            cmdline = self.wrap_commands_in_shell(
-                'linux', [f'mv {file_path}/{blob_path}' + ' ${AZ_BATCH_NODE_SHARED_DIR}'])
-
-        prep_task = batchmodels.JobPreparationTask(
-            id="copy_file_task",
-            command_line=cmdline,
-            resource_files=[input_file])
-
-        return prep_task
-
-    def wrap_commands_in_shell(self, ostype, commands):
-        """Wrap commands in a shell
-
-        :param list commands: list of commands to wrap
-        :param str ostype: OS type, linux or windows
-        :rtype: str
-        :return: a shell wrapping commands
-        """
-        if ostype.lower() == 'linux':
-            return '/bin/bash -c \'set -e; set -o pipefail; {}; wait\''.format(
-                ';'.join(commands))
-        elif ostype.lower() == 'windows':
-            return 'cmd.exe /c "{}"'.format('&'.join(commands))
-        else:
-            raise ValueError('unknown ostype: {}'.format(ostype))
-
-    def create_input_file_spec(self, container_name, blob_prefix, file_path='.'):
-        return batchmodels.ResourceFile(
-            auto_storage_container_name=container_name,
-            blob_prefix=blob_prefix,
-            file_path=file_path)
-
-    def create_output_file_spec(self, file_pattern, output_container_sas_url, blob_path='.'):
-        return batchmodels.OutputFile(
-            file_pattern=file_pattern,
-            destination=batchmodels.OutputFileDestination(
-                container=batchmodels.OutputFileBlobContainerDestination(
-                    container_url=output_container_sas_url, path=blob_path)),
-            upload_options=batchmodels.OutputFileUploadOptions(
-                upload_condition=batchmodels.OutputFileUploadCondition.task_success)
-        )
-
-    def create_job(self, job_id, pool_id, prep_task=None):
-        """
-        Creates a job with the specified ID, associated with the specified pool.
-
-        :param batch_service_client: A Batch service client.`azure.batch.BatchServiceClient`
-        :param str job_id: The ID for the job.
-        :param str pool_id: The ID for the pool.
-        :param JobPreparationTask: preparation task before running tasks in the job
-        """
-        logging.info('Creating job [{}]...'.format(job_id))
-
-        job = batch.models.JobAddParameter(
-            id=job_id,
-            job_preparation_task=prep_task,
-            pool_info=batch.models.PoolInformation(pool_id=pool_id))
-
-        self.batch_client.job.add(job)
-
-    def delete_job(self, job_id):
-        raise 'TBD'
-
     def create_task(self, task_id, command, resource_files=None, output_files=None, env_settings=None,
             elevation_level=None, num_instances=1, coordination_cmdline=None, coordination_files=None):
         """Create a task for the given input_file, command, output file specs and environment settings.
@@ -683,6 +681,22 @@ class AzureBatch:
             time.sleep(10)
 
         return
+
+    def wrap_commands_in_shell(self, ostype, commands):
+        """Wrap commands in a shell
+
+        :param list commands: list of commands to wrap
+        :param str ostype: OS type, linux or windows
+        :rtype: str
+        :return: a shell wrapping commands
+        """
+        if ostype.lower() == 'linux':
+            return '/bin/bash -c \'set -e; set -o pipefail; {}; wait\''.format(
+                ';'.join(commands))
+        elif ostype.lower() == 'windows':
+            return 'cmd.exe /c "{}"'.format('&'.join(commands))
+        else:
+            raise ValueError('unknown ostype: {}'.format(ostype))
 
     def set_path_to_apps(self, apps, ostype='windows'):
         """create cmd to set path to apps binary locations
