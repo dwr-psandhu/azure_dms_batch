@@ -1,0 +1,7 @@
+startingNumberOfVMs = 0;
+maxNumberofVMs = 60;
+numCores=32;
+activeTaskSamplePercent = $ActiveTasks.GetSamplePercent(60 * TimeInterval_Second);
+activeTaskSamples = activeTaskSamplePercent < 70 ? startingNumberOfVMs : avg($ActiveTasks.GetSample(60 * TimeInterval_Second))/numCores;
+$TargetLowPriorityNodes=min(maxNumberofVMs, activeTaskSamples);
+$NodeDeallocationOption = taskcompletion;

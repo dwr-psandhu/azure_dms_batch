@@ -1,11 +1,15 @@
 from argparse import ArgumentParser
+import dmsbatch
 from dmsbatch import __version__
+from dmsbatch import commands
 
-def config_cmd(args):
-    print('Called config with ', args)
 
 def config_generate_cmd(args):
-    print('Called config generate with ', args)
+    if not args.file:
+        print('Specify config file!')
+        return
+    print('Generating blank config: ', args.file)
+    commands.generate_blank_config(args.file)
 
 def cli(args=None):
     p = ArgumentParser(
@@ -14,7 +18,7 @@ def cli(args=None):
     )
     p.set_defaults(func=lambda args: p.print_help())
     p.add_argument(
-        '-V', '--version',
+        '-v', '--version',
         action='version',
         help='Show the conda-prefix-replacement version number and exit.',
         version="dmsbatch %s" % __version__,
@@ -23,15 +27,13 @@ def cli(args=None):
     # do something with the sub commands
     sub_p = p.add_subparsers(help='sub-command help')
     # add show all sensors command
-    config_cmd = sub_p.add_parser('config', help='config related commands')
-    config_cmd.set_defaults(func=config_cmd)
-    config_generate_cmd = config_cmd.add_subparsers(help='config related commands')
-    config_generate_cmd.add_parser('generate')
-    config_generate_cmd.set_defaults(func=config_generate_cmd)
+    p1 = sub_p.add_parser('gen-config', help='generate config')
+    p1.add_argument('-f', '--file', type=str, required=True, help='output file')
+    p1.set_defaults(func=config_generate_cmd)
     # Now call the appropriate response.
-    pargs = p.parse_args(args)
-    pargs.func(pargs)
-    return 
+    args = p.parse_args(args)
+    args.func(args)
+    return
     # No return value means no error.
     # Return a value of 1 or higher to signify an error.
     # See https://docs.python.org/3/library/sys.html#sys.exit

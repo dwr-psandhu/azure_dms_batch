@@ -42,9 +42,10 @@ test:
   requires:
     - pytest
     - pytest-cov
-  commands:
-    - pytest
-
+  #commands:
+    #- pytest # not doing pytest because the integration tests require secrets
+  imports:
+   - dmsbatch
 about:
   home: https://github.com/dwr-psandhu/azure_dms_batch
   summary: Azure Batch for Delta Modeling Section 

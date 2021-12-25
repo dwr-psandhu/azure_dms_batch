@@ -3,9 +3,10 @@ import versioneer
 
 requirements = [
     'azure-batch==11.0.0',
-    'azure-storage-blob==2.1.0',
-    'azure-mgmt-resource>=18.0.0',
-    'azure-identity>=1.5.0'
+    'azure-storage-blob==12.9.0',
+    'azure-mgmt-resource>=20.0.0',
+    'azure-identity>=1.7.1',
+    'msrest>=0.6.21'
 ]
 
 setup(

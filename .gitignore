@@ -2,7 +2,10 @@
 # jupyter notebooks temp dir
 **/.ipynb_checkpoints
 # tests data
+.pytest_cache/
+junit.xml
 tests/data
+tests/junit.xml
 # dss and h5 binary files
 *.dss
 *.h5
