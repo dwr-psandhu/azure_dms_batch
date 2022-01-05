@@ -11,7 +11,21 @@ variables and produces a set of output files.
 
 This module is currently tested with "Windows" based exes but shoud be easily adapatable to "Linux"
 
-# Setup 
+# Setup package
+Use the environment.yml with conda to create an environment called azure
+```
+conda env create -f environment.yml
+```
+Git clone this project
+```
+git clone https://github.com/dwr-psandhu/azure_dms_batch.git
+```
+Change directory to the location of this project and then install using
+```
+pip install --no-deps -e .
+```
+
+# Setup Azure
 
 Setup can be done via az commands. Here we setup a batch account with associated storage
 
