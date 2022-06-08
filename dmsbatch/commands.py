@@ -565,7 +565,7 @@ class AzureBatch:
         -------
         batchmodels.JobPreparationTask
         """
-        cmdline = self.wrap_commands_in_shell(ostype, commands)
+        cmdline = self.wrap_commands_in_shell(commands, ostype)
         prep_task = batchmodels.JobPreparationTask(
             id=task_name,
             command_line=cmdline,
